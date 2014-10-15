@@ -64,10 +64,10 @@ def main():
                     itemid = r['itemid']
                     try:
                         hm = hostmap[itemid]
-                        print "zbx.%s %d %s host=%s proxy=%s" % (hm['key'], r['clock'], r['value'], hm['host'], hm['proxy'])
+                        print "zbx.%s %s %d host=%s proxy=%s" % (hm['key'], r['value'], r['clock'], hm['host'], hm['proxy'])
                     except KeyError:
                         # TODO: Consider https://wiki.python.org/moin/PythonDecoratorLibrary#Retry
-                        hostmap = gethostmap(settings)
+                        #hostmap = gethostmap(settings)
                         utils.err("error: Key lookup miss for %s" % (itemid))
                 sys.stdout.flush()
                 # if n seconds old, reload

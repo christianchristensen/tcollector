@@ -297,7 +297,8 @@ class ReaderThread(threading.Thread):
         # while breaking out every once in a while to setup selects
         # on new children.
         while ALIVE:
-            for col in all_living_collectors():
+            alc = all_living_collectors()
+            for col in alc:
                 for line in col.collect():
                     self.process_line(col, line)
 
@@ -309,10 +310,6 @@ class ReaderThread(threading.Thread):
                     for col in all_collectors():
                         col.evict_old_keys(now)
 
-            # and here is the loop that we really should get rid of, this
-            # just prevents us from spinning right now
-            time.sleep(1)
-
     def process_line(self, col, line):
         """Parses the given line and appends the result to the reader queue."""
 
@@ -323,17 +320,6 @@ class ReaderThread(threading.Thread):
             LOG.warning('%s line too long: %s', col.name, line)
             col.lines_invalid += 1
             return
-        parsed = re.match('^([-_./a-zA-Z0-9]+)\s+' # Metric name.
-                          '(\d+)\s+'               # Timestamp.
-                          '(\S+?)'                 # Value (int or float).
-                          '((?:\s+[-_./a-zA-Z0-9]+=[-_./a-zA-Z0-9]+)*)$', # Tags
-                          line)
-        if parsed is None:
-            LOG.warning('%s sent invalid data: %s', col.name, line)
-            col.lines_invalid += 1
-            return
-        metric, timestamp, value, tags = parsed.groups()
-        timestamp = int(timestamp)
 
         # De-dupe detection...  To reduce the number of points we send to the
         # TSD, we suppress sending values of metrics that don't change to
@@ -482,7 +468,6 @@ class SenderThread(threading.Thread):
                 except Empty:
                     continue
                 self.sendq.append(line)
-                time.sleep(5)  # Wait for more data
                 while True:
                     # prevents self.sendq fast growing in case of sending fails
                     # in send_data()
@@ -494,8 +479,7 @@ class SenderThread(threading.Thread):
                         break
                     self.sendq.append(line)
 
-                if ALIVE:
-                    self.send_data()
+                self.send_data()
                 errors = 0  # We managed to do a successful iteration.
             except (ArithmeticError, EOFError, EnvironmentError, LookupError,
                     ValueError), e:
@@ -530,43 +514,14 @@ class SenderThread(threading.Thread):
                 pass    # not handling that
             self.time_reconnect = time.time()
             return False
-            
+
         # we use the version command as it is very low effort for the TSD
         # to respond
-        LOG.debug('verifying our TSD connection is alive')
-        try:
-            self.tsd.sendall('version\n')
-        except socket.error, msg:
-            self.tsd = None
-            self.blacklist_connection()
-            return False
+        LOG.debug('DISABLED - verifying our TSD connection is alive')
 
         bufsize = 4096
         while ALIVE:
-            # try to read as much data as we can.  at some point this is going
-            # to block, but we have set the timeout low when we made the
-            # connection
-            try:
-                buf = self.tsd.recv(bufsize)
-            except socket.error, msg:
-                self.tsd = None
-                self.blacklist_connection()
-                return False
-
-            # If we don't get a response to the `version' request, the TSD
-            # must be dead or overloaded.
-            if not buf:
-                self.tsd = None
-                self.blacklist_connection()
-                return False
-
-            # Woah, the TSD has a lot of things to tell us...  Let's make
-            # sure we read everything it sent us by looping once more.
-            if len(buf) == bufsize:
-                continue
-
-            # If everything is good, send out our meta stats.  This
-            # helps to see what is going on with the tcollector.
+            # This helps to see what is going on with the tcollector.
             if self.self_report_stats:
                 strs = [
                         ('reader.lines_collected',
@@ -585,7 +540,7 @@ class SenderThread(threading.Thread):
 
                 ts = int(time.time())
                 strout = ["tcollector.%s %d %d %s"
-                          % (x[0], ts, x[2], x[1]) for x in strs]
+                          % (x[0], x[2], ts, x[1]) for x in strs]
                 for string in strout:
                     self.sendq.append(string)
 
@@ -665,11 +620,11 @@ class SenderThread(threading.Thread):
         # in case of logging we use less efficient variant
         if LOG.level == logging.DEBUG:
             for line in self.sendq:
-                line = "put %s" % self.add_tags_to_line(line)
+                line = "%s" % self.add_tags_to_line(line)
                 out += line + "\n"
                 LOG.debug('SENDING: %s', line)
         else:
-            out = "".join("put %s\n" % self.add_tags_to_line(line) for line in self.sendq)
+            out = "".join("%s\n" % self.add_tags_to_line(line) for line in self.sendq)
 
         if not out:
             LOG.debug('send_data no data?')
